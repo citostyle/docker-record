@@ -5,7 +5,7 @@ Getting your infrastructure to work properly in your Docker container is an iter
 
 With docker-record we want to address this issue and provide a semi-automated way that takes us from getting our infrastructure up and running in our container to the reproducible and transparent definition of infastructure in a Dockerfile.
 
-In that vein, you can start your infrastructrue setup/maintenance process with docker-record <CONTAINER>, that will initiate a bash session within your running container (similar to docker attach). You can easily exit out of docker-record for testing or any other purposes and start the process again. When you feel that you are done or want to see how the potential Dockerfile would look like, run docker-record <CONTAINER> --replay and the Dockerfile instructions will be shown on your screen (i.e., stdout).
+In that vein, you can start your infrastructrue setup/maintenance process with `docker-record <CONTAINER>`, that will initiate a bash session within your running container (similar to docker attach). You can easily exit out of docker-record for testing or any other purposes and start the process again. When you feel that you are done or want to see how the potential Dockerfile would look like, run `docker-record <CONTAINER> --replay` and the Dockerfile instructions will be shown on your screen (i.e., stdout).
 
 Installation
 ------------
@@ -49,7 +49,7 @@ Background/Overview
 --------------------
 
 When starting your setup/maintenance process with docker-record, with every issued command in your shell, we log (i.e., 'record') the command, working directory, user id, and environment variables. 
-The Dockerfile can than be seen as the mapping between the gathered historical data and Dockerfile instructions. However, not every mapping is straight-forward, some require the use of heuristics to provide meaningful approximation.
+The Dockerfile can then be seen as the mapping between the gathered historical data and Dockerfile instructions. However, not every mapping is straight-forward, some require the use of heuristics to provide meaningful approximation.
 
 The overall process can be summarized as follows:
 - Instrument bash commands to gain a full history with execution context
@@ -59,7 +59,7 @@ The overall process can be summarized as follows:
 - Apply heuristics to *eliminate* Dockerfile instructions
 
 In the current, initial version resulting out of Docker Hack Day #3, we provide heuristics for detecting which 
-files haven been affected and copy these files from the container to a build folder (BUILD_CONTEXT_PATH in docker-record source).
+files haven been affected and copy these files from the container to a build folder (`BUILD_CONTEXT_PATH` in docker-record source).
 We also have a very simple heuristic that identifies what the CMD instruction might be.
 During the hackathon we have brainstormed about further heuristics that are documented in Future Work. 
 
@@ -75,6 +75,8 @@ Future Work
 
 - *Fine-grain diffs*: Run `docker diff` between every command. This can be done by [sharing a named pipe with the container] [1], writing to that pipe from the instrumentation code, and reading from it in the docker-record process, which would then call diff on every read. The session would have to be converted from a call to exec (see [this approach] [2]), so that the python process could read the pipe and run diff. Furthermore, adding volumes to an already running container is not yet supported, but may be in the [future] [3].
 
+- *Refactor, Refactor, Refactor*: So far the code is definitely not in its optimal state. There is a lot of refactoring that needs to be done.
+ 
 [1]: https://github.com/docker/docker/issues/14221#issuecomment-116618705
 [2]: https://github.com/d11wtq/dockerpty/issues/30 "Maybe we could contribute to this other project."
 [3]: https://github.com/docker/docker/pull/14242 "Look, a volume api!"
