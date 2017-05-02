@@ -1,19 +1,11 @@
-#!/usr/bin/env python
-# vim: set ts=4; shiftwidth=4; expandtab
-"""docker-record
-
-Usage:
-  docker-record <CONTAINER>
-  docker-record <CONTAINER> --replay
-"""
 from docker import Client
-from docopt import docopt
 import io
 import os
 import sys
 import tarfile
 
-## record
+# record
+
 
 def record(container):
 
@@ -31,12 +23,12 @@ function __instrument() {
 };
 shopt -s extdebug;
 trap __instrument DEBUG;'''
-    RECORD_COMMAND = RECORD_TEMPLATE.format(instrumentation = INSTRUMENTATION.replace('\n', ' '))
+    RECORD_COMMAND = RECORD_TEMPLATE.format(instrumentation=INSTRUMENTATION.replace('\n', ' '))
 
     # use docker exec to drop the user into an instrumented bash session
     os.execlp('docker', 'docker', 'exec', '-ti', container, 'bash', '-c', RECORD_COMMAND)
 
-## replay
+# replay
 
 # make it work now, refactor later
 SESSION_PATH = '/tmp/record/{filename}'
@@ -54,8 +46,9 @@ COMMAND_BLACKLIST = ['ls', 'cd', 'pwd', 'history', 'du', 'top', 'ps',
 # Heuristic: these commands are likely to be "service"
 DOCKER_CMD_WHITELIST = ['service', '/etc/init.d/']
 
-# Heuristic: add files that were opened by an editor and correspond to docker diff 
+# Heuristic: add files that were opened by an editor and correspond to docker diff
 EDITOR_WHITELIST = ['nano', 'vim', 'emacs', 'joe']
+
 
 def replay(container):
 
@@ -67,7 +60,6 @@ def replay(container):
     dockerfile_cmd_command = ""
 
     fs_changes = filesystem_diff(container)
-    
 
     # Extract RUN and CMD directives from our history logs into the Dockerfile
     for command, environment, workdir in zip(commands, environments, workdirs):
@@ -75,9 +67,8 @@ def replay(container):
         if is_blacklisted(command):
             continue
 
-
         if is_docker_cmd(command):
-            # there can only be one, and this current heuristic 
+            # there can only be one, and this current heuristic
             # just picks the last that has been executed
             dockerfile_cmd_command = "CMD " + command
         elif is_editor(command):
@@ -106,8 +97,10 @@ def copy_from_container(container, source, destination):
     with open(destination, 'w') as f:
         f.write(file_contents)
 
+
 def flatten_path(path):
     return path.replace('/', '_')
+
 
 def changed_in_filesystem(fs_changes, filename):
     # ignore the Kind parameter for now
@@ -115,6 +108,7 @@ def changed_in_filesystem(fs_changes, filename):
         if filename == change_paths:
             return True
     return False
+
 
 def filesystem_diff(container):
     client = Client()
@@ -124,17 +118,22 @@ def filesystem_diff(container):
         changes[raw_change['Path']] = raw_change['Kind']
     return changes
 
+
 def extract_path_from_editor_command(command):
     return command.split(' ')[1]
 
+
 def read_session(container, filename):
-    return copy(container, SESSION_PATH.format(filename = filename)).split("\n")
+    return copy(container, SESSION_PATH.format(filename=filename)).split("\n")
+
 
 def is_docker_cmd(command):
     return startswith(command, DOCKER_CMD_WHITELIST)
 
+
 def is_editor(command):
     return startswith(command, EDITOR_WHITELIST)
+
 
 def is_blacklisted(command):
     if not command.strip():
@@ -142,11 +141,13 @@ def is_blacklisted(command):
 
     return startswith(command, COMMAND_BLACKLIST)
 
+
 def startswith(string, collection):
     for item in collection:
         if string.startswith(item):
             return True
     return False
+
 
 def copy(container, path):
     client = Client()
@@ -157,14 +158,3 @@ def copy(container, path):
     tar = tarfile.open(fileobj=buffer, mode='r')
     for member in tar.getmembers():
         return tar.extractfile(member).read()
-
-if __name__ == '__main__':
-
-    arguments = docopt(__doc__, version='docker-record 1.0')
-    container = arguments['<CONTAINER>']
-
-    if arguments['--replay']:
-        replay(container)
-    else:
-        record(container)
-

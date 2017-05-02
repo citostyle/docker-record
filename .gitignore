@@ -1,1 +1,7 @@
 env
+/.coverage
+/.venv/
+/nosetests.xml
+*.pyc
+/dist/
+/docker_record.egg-info/
