@@ -4,7 +4,7 @@
 """docker-record
 
 Usage:
-  docker-record <CONTAINER>
+  docker-record <CONTAINER_OR_IMAGE>
   docker-record <CONTAINER> --replay
 """
 import os
@@ -20,10 +20,9 @@ from docker_record import main
 if __name__ == '__main__':
 
     arguments = docopt(__doc__, version='docker-record 1.0')
-    container = arguments['<CONTAINER>']
 
     if arguments['--replay']:
-        main.replay(container)
+        main.replay(arguments['<CONTAINER>'])
     else:
-        main.record(container)
+        main.record(arguments['<CONTAINER_OR_IMAGE>'])
 
