@@ -3,12 +3,22 @@ import io
 import os
 import sys
 import tarfile
+import subprocess
+import time
 
 # record
+def record(container_name):
+    # use docker exec to drop the user into an instrumented bash session
+    pid = os.fork()
+    if pid > 0:
+        start_instrumented_container(container_name)
+    else:
+        execute(['docker', 'exec', container_name, 'mkdir', '-p', '/tmp/record/'])
+        execute(['docker', 'exec', container_name, 'touch', '/tmp/record/cmd'])
+        track_state_changes(container_name)
 
 
-def record(container):
-
+def start_instrumented_container(container_name):
     # construct the bash script that will instrument the user's session
     RECORD_TEMPLATE = """bash --init-file <(echo '{instrumentation}')"""
     INSTRUMENTATION = '''
@@ -25,10 +35,44 @@ shopt -s extdebug;
 trap __instrument DEBUG;'''
     RECORD_COMMAND = RECORD_TEMPLATE.format(instrumentation=INSTRUMENTATION.replace('\n', ' '))
 
-    # use docker exec to drop the user into an instrumented bash session
-    os.execlp('docker', 'docker', 'exec', '-ti', container, 'bash', '-c', RECORD_COMMAND)
+    os.execlp('docker', 'docker', 'exec', '-ti', container_name, 'bash', '-c', RECORD_COMMAND)
 
-# replay
+
+def track_state_changes(container_name):
+    fout = open("t.txt", 'ab', 0)
+    # react to every line added in the 'cmd' file by the instrumented container
+    client = Client()
+    previous_changes = set()
+    for line in execute_lines(['docker', 'exec', container_name, 'tail', '-f', '/tmp/record/cmd']):
+        # store changes for every command
+        raw_changes = client.diff(container_name)
+        current_command_changes = []
+        for raw_change in raw_changes:
+            #changes[raw_change['Path']] = raw_change['Kind']
+            path = raw_change['Path']
+            if not path in previous_changes:
+                previous_changes.add(path)
+                current_command_changes.append(path)
+        fout.write((line.rstrip() + ":" + str(current_command_changes) + "\n").encode())
+
+    fout.close()
+
+def execute(cmd):
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    out, err = p.communicate()
+    return out
+
+def execute_lines(cmd):
+    popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+    for stdout_line in iter(popen.stdout.readline, ""):
+        yield stdout_line
+    popen.stdout.close()
+    return_code = popen.wait()
+    if return_code:
+        raise subprocess.CalledProcessError(return_code, cmd)
+
+
+
 
 # make it work now, refactor later
 SESSION_PATH = '/tmp/record/{filename}'
@@ -89,7 +133,7 @@ def replay(container):
     dockerfile.append(dockerfile_cmd_command)
 
     for instruction in dockerfile:
-        print instruction
+        print(instruction)
 
 
 def copy_from_container(container, source, destination):
