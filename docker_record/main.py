@@ -15,6 +15,7 @@ def record(container_name):
     else:
         execute(['docker', 'exec', container_name, 'mkdir', '-p', '/tmp/record/'])
         execute(['docker', 'exec', container_name, 'touch', '/tmp/record/cmd'])
+        execute(['docker', 'exec', container_name, 'touch', '/tmp/record/diff_trigger'])
         track_state_changes(container_name)
 
 
@@ -25,14 +26,20 @@ def start_instrumented_container(container_name):
 SESSION_ROOT=/tmp/record;
 mkdir -p $SESSION_ROOT;
 function __instrument() {
-  echo $EUID >> $SESSION_ROOT/euid &&
-  echo $BASH_COMMAND >> $SESSION_ROOT/cmd &&
-  echo $PWD >> $SESSION_ROOT/pwd &&
-  echo $(export | tr "\\n" ";") >> $SESSION_ROOT/env ||
-  exit;
+  if [[ ! $BASH_COMMAND =~ "diff_trigger" ]]; then
+    echo $EUID >> $SESSION_ROOT/euid &&
+    echo $BASH_COMMAND >> $SESSION_ROOT/cmd &&
+    echo $PWD >> $SESSION_ROOT/pwd &&
+    echo $(export | tr "\\n" ";") >> $SESSION_ROOT/env ||
+    exit;
+  fi
 };
+
 shopt -s extdebug;
-trap __instrument DEBUG;'''
+trap __instrument DEBUG;
+
+PROMPT_COMMAND="tail -n 1 $SESSION_ROOT/cmd >> $SESSION_ROOT/diff_trigger"
+'''
     RECORD_COMMAND = RECORD_TEMPLATE.format(instrumentation=INSTRUMENTATION.replace('\n', ' '))
 
     os.execlp('docker', 'docker', 'exec', '-ti', container_name, 'bash', '-c', RECORD_COMMAND)
@@ -43,7 +50,7 @@ def track_state_changes(container_name):
     # react to every line added in the 'cmd' file by the instrumented container
     client = Client()
     previous_changes = set()
-    for line in execute_lines(['docker', 'exec', container_name, 'tail', '-f', '/tmp/record/cmd']):
+    for line in execute_lines(['docker', 'exec', container_name, 'tail', '-f', '/tmp/record/diff_trigger']):
         # store changes for every command
         raw_changes = client.diff(container_name)
         current_command_changes = []
