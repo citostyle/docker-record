@@ -4,26 +4,94 @@ import os
 import sys
 import tarfile
 import subprocess
-import time
+import csv
+
+
+## restructure
+# c = InstrumentedContainer(name)
+# c.record()
+# --> introduce another abstracted helper function for stuff like
+# execute(['docker', 'exec', container_name, '>', '/tmp/record/diff_trigger'])
+# c.exec('>', '/tmp/record/diff_trigger')
+#
+# Make container util class for stuff like container_exists
+#
+# There is a central place where we store info on where the state changes are persisted
+# right now it's statically encoded in read_fs_changes (track_state_changes then takes these to not start from scratch)
+#
+# Have exclusion patterns for limiting the queries to filesystem in container for timing information
+#
+# Introduce transient change tracking (probably in track_state_changes)
+#
+# Have another class that takes in all the state change information and tries to create the Dockerfile
+# That can be totally abstracted away, probably we can provide a super simple base class for this
+# class Generator:
+#   def generate <-- weird name, I can probably do better than this
+#
+#   --> base generator also has a standard I/O provider
+#
+# Probably it's actually that simple, because then I can have subclasses like
+# DockerfileGenerator
+# AnsibleGenerator
+# DockerfileIdiomaticGenerator (inherits from DockerfileGenerator and
+# adds the opaque function from our probabilistic model)
+#
+# g = DockerfileGenerator()
+#
+# g.generate()
+# In that sense, the InstrumentedContainer and the generators can be
+# seen as two totally orthogonal programs  that only communicate over
+# the shared state change data structures
+#
+# Although it might make sense to do some of the optimizations on the fly
+# (like remove commands that have no state changes, might make tracking harder and more convoluted though)
+#
+# class DockerfileGenerator()
+#    def __init__(container_name):
+#
+#    # returns a Dockerfile Object
+#    def generate():
+#
+#
+# class OutputProvider() # base class
+#   def __init__():
+#
+#   def ... <-- not sure how the output provider should look like
+#
+#
+#
 
 # record
 def record(container_name):
+    if not container_exists(container_name):
+        #create_container(container_name)
+        print("Container does not exist. Please start the container that we can attach to", file=sys.stderr)
+        exit()
+
+
     # use docker exec to drop the user into an instrumented bash session
+
     pid = os.fork()
     if pid > 0:
         start_instrumented_container(container_name)
     else:
         execute(['docker', 'exec', container_name, 'mkdir', '-p', '/tmp/record/'])
         execute(['docker', 'exec', container_name, 'touch', '/tmp/record/cmd'])
-        execute(['docker', 'exec', container_name, 'touch', '/tmp/record/diff_trigger'])
-        track_state_changes(container_name)
+        execute(['docker', 'exec', container_name, '>', '/tmp/record/diff_trigger'])
+
+        fs_changes = read_fs_changes(container_name)
+        track_state_changes(container_name, fs_changes)
 
 
+EXIT_SIGNAL = "!EXIT!"
+
+#TODO: replace #EXIT# with constant
 def start_instrumented_container(container_name):
     # construct the bash script that will instrument the user's session
     RECORD_TEMPLATE = """bash --init-file <(echo '{instrumentation}')"""
     INSTRUMENTATION = '''
 SESSION_ROOT=/tmp/record;
+EXIT_SIGNAL="!EXIT!"
 mkdir -p $SESSION_ROOT;
 function __instrument() {
   if [[ ! $BASH_COMMAND =~ "diff_trigger" ]]; then
@@ -40,34 +108,106 @@ trap __instrument DEBUG;
 
 PROMPT_COMMAND="tail -n 1 $SESSION_ROOT/cmd >> $SESSION_ROOT/diff_trigger"
 '''
+
+#function __finish() {
+#   $EXIT_SIGNAL >> $SESSION_ROOT/diff_trigger;
+#};
+#trap __finish EXIT;
+
     RECORD_COMMAND = RECORD_TEMPLATE.format(instrumentation=INSTRUMENTATION.replace('\n', ' '))
 
     os.execlp('docker', 'docker', 'exec', '-ti', container_name, 'bash', '-c', RECORD_COMMAND)
 
 
-def track_state_changes(container_name):
-    fout = open("t.txt", 'ab', 0)
-    # react to every line added in the 'cmd' file by the instrumented container
+def container_exists(container_name):
+    client = Client()
+    container_list = client.containers()
+    return len([container['Names'] for container in container_list if ('/' + container_name) in container['Names']]) == 1
+
+
+def create_container(container_name):
+    client = Client()
+    image_name = input("Container does not exist. We'll start one. What should the base image be?")
+    if not image_name:
+        image_name = "ubuntu"
+    create_container(image_name, detach=True, name=container_name)
+
+
+# create class/module that deals with all things filesystem (changes, tracking, etc.)
+def write_filesystem_changes(fs_changes, fout_fs):
+    fout_fs.write((",".join([str(change['path']) + "::" + str(change['timestamp']) for change in fs_changes]) + "\n").encode())
+
+def read_filesystem_changes(line):
+    if not "," in line: return None
+
+    for change in line.split(","):
+        if not "::" in change:
+            next
+        path, timestamp = change.split("::")
+        yield path, timestamp
+
+def read_fs_changes(container_name):
+    fs_changes = {}
+    try:
+        fin_fs = open(get_filesystem_track_filename(container_name), 'rb', 0)
+        for line in fin_fs:
+            for path, timestamp in read_filesystem_changes(str(line)):
+                fs_changes[path] = timestamp
+        fin_fs.close()
+        return fs_changes
+    except Exception as ex:
+        print(ex.with_traceback())
+        return {}
+
+
+
+def get_command_track_filename(container_name):
+    return "traces/" + container_name + "_cmd.txt"
+
+
+def get_filesystem_track_filename(container_name):
+    return "traces/" + container_name + "_fs.txt"
+
+
+def track_state_changes(container_name, persisted_fs_changes):
+    fout_cmd = open(get_command_track_filename(container_name), 'ab', 0)
+    fout_fs = open(get_filesystem_track_filename(container_name), 'ab', 0)
+    # react to every line added in the 'diff_trigger' file by the instrumented container
     client = Client()
     previous_changes = set()
+    fs_changes = persisted_fs_changes
+    print(fs_changes)
     for line in execute_lines(['docker', 'exec', container_name, 'tail', '-f', '/tmp/record/diff_trigger']):
         # store changes for every command
         raw_changes = client.diff(container_name)
         current_command_changes = []
         for raw_change in raw_changes:
-            #changes[raw_change['Path']] = raw_change['Kind']
             path = raw_change['Path']
-            if not path in previous_changes:
+            if not path in fs_changes:
                 previous_changes.add(path)
-                current_command_changes.append(path)
-        fout.write((line.rstrip() + ":" + str(current_command_changes) + "\n").encode())
+                path_change_timestamp = get_container_file_timestamp(container_name, path)
+                fs_changes[path] = path_change_timestamp
+                current_command_changes.append({'path': path, 'timestamp': path_change_timestamp})
+        fout_cmd.write((line.rstrip() + "\n").encode())
+        write_filesystem_changes(current_command_changes, fout_fs)
 
-    fout.close()
+    fout_fs.close()
+    fout_cmd.close()
+
+
+def get_container_file_timestamp(container_name, filename):
+    # date -r beehive-1930_cmd.txt +%s
+    # +%s returns a timestamp
+    timestamp = execute(['docker', 'exec', container_name, 'date', '-r', filename, '+%s'])
+    return timestamp.rstrip()
+
+
 
 def execute(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     out, err = p.communicate()
     return out
+
 
 def execute_lines(cmd):
     popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
@@ -77,8 +217,6 @@ def execute_lines(cmd):
     return_code = popen.wait()
     if return_code:
         raise subprocess.CalledProcessError(return_code, cmd)
-
-
 
 
 # make it work now, refactor later
