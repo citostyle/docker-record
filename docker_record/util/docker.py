@@ -1,5 +1,6 @@
 import io, tarfile
 from docker import Client
+from .process import execute
 
 def container_exists(container_name):
     client = Client()
@@ -17,6 +18,13 @@ def create_container(container_name, image_name=None):
 def container_diff(container_name):
     client = Client()
     return client.diff(container_name)
+
+
+def container_commit(container_name, image_name, image_tag = 'latest'):
+    output = execute("docker commit {container_name} {image_name}:{image_tag}".format(container_name=container_name,
+                                                                                      image_name=image_name,
+                                                                                      image_tag=image_tag))
+    return output
 
 
 def copy(container, path):

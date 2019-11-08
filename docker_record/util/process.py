@@ -1,4 +1,5 @@
 import subprocess
+from ..log import *
 
 def execute(cmd):
     if type(cmd) == str:
@@ -10,6 +11,10 @@ def execute(cmd):
 def execute_shell(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=True)
     out, err = p.communicate()
+    if err:
+        log("EXECUTE SHELL: " + cmd + " -> " + str(err))
+    else:
+        log("EXECUTE SHELL: " + cmd)
     return out
 
 def execute_lines(cmd):
